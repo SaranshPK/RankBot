@@ -61,7 +61,7 @@ def assignGroup(cldbid,telnet):
     try:
         user = users[cldbid]
     except KeyError:
-        command = "sendtextmessage targetmode=1 target=397 msg=User\s"+ cldbid +"\sisn't\sregistered!\n"
+        command = "sendtextmessage targetmode=1 target=433 msg=User\s"+ cldbid +"\sisn't\sregistered!\n"
         telnet.write(command.encode('ascii'))
         return
 
@@ -77,7 +77,7 @@ def assignGroup(cldbid,telnet):
         # only give ranks to people who have ranked data
         # some people are unranked
         try:
-            rank = rankeddata[0]['tier']
+            rank = rankeddata[-1]['tier']
         except KeyError:
             return
         except IndexError:
@@ -149,10 +149,13 @@ while 1:
             splitinfo = registerdata.split("\s", 2)
             cldbid = splitinfo[0]
             region = splitinfo[1]
-            name = splitinfo[2].replace("\\s", "%20")
+            summonerName = splitinfo[2].replace("\\s", "%20")
 
-            # request league id from name and region
-            ID = requestSummonerData(Regions[int(region)], name)['id']
+            # request league id from name and region if they play league
+            if(summonerName == "none"):
+                ID = ""
+            else:
+                ID = requestSummonerData(Regions[int(region)], summonerName)['id']
 
             # get user list
             with open('userdata.txt') as userfile:
