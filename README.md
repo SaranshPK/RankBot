@@ -1,2 +1,2 @@
 # RankBot
-A bot TeamSpeak server groups corresponding to League of Legends ranks
+A TeamSpeak bot to assign server groups to users corresponding to their League of Legends rank

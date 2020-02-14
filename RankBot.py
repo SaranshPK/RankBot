@@ -37,6 +37,7 @@ with open("auth.txt") as authfile:
     authVars = json.load(authfile)
     APIKey = authVars['APIKey']
     password = authVars['password']
+    Host = authVars["host"]
     
 def requestSummonerData(region, summonerName):
     URL = "https://" + region + ".api.riotgames.com/lol/summoner/v4/summoners/by-name/" + summonerName + "?api_key=" + APIKey
