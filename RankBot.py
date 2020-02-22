@@ -129,7 +129,7 @@ while 1:
             cluidend = line.index(" ",cluidstart)
             cluid = line[cluidstart:cluidend]
 
-            if cluid = adminUid:
+            if cluid == adminUid:
                 clidstart = line.index("clid")+5
                 clidend = line.index(" ",clidstart)
                 adminClid = line[clidstart:clidend]
