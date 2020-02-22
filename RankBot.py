@@ -4,8 +4,9 @@ import telnetlib
 import time
 import io
 
-Regions = ["na1","la1","la2"]
+Regions = ["na1","la1","la2","euw1"]
 Port = "10011"
+adminClid = 0
 
 # server group id corresponding to each rank
 servergroupsNA = {
@@ -37,6 +38,7 @@ with open("auth.txt") as authfile:
     APIKey = authVars['APIKey']
     password = authVars['password']
     Host = authVars["host"]
+    adminUid = authVars["adminuid"]
 
 # get summoner data from their name and region
 def requestSummonerData(region, summonerName):
@@ -61,7 +63,7 @@ def assignGroup(cldbid,telnet):
     try:
         user = users[cldbid]
     except KeyError:
-        command = "sendtextmessage targetmode=1 target=433 msg=User\s"+ cldbid +"\sisn't\sregistered!\n"
+        command = "sendtextmessage targetmode=1 target=" + adminClid + " msg=User\s"+ cldbid +"\sisn't\sregistered!\n"
         telnet.write(command.encode('ascii'))
         return
 
@@ -127,6 +129,10 @@ while 1:
             cluidend = line.index(" ",cluidstart)
             cluid = line[cluidstart:cluidend]
 
+            if cluid = adminUid:
+                clidstart = line.index("clid")+5
+                clidend = line.index(" ",clidstart)
+                adminClid = line[clidstart:clidend]
             # request their cldbid (client database id)
             telnet.write(("clientgetdbidfromuid cluid=" + cluid + "\n").encode('ascii'))
 
