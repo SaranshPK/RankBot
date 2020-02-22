@@ -130,9 +130,12 @@ while 1:
             cluid = line[cluidstart:cluidend]
 
             if cluid == adminUid:
+                
+                # get admin clid for text messages
                 clidstart = line.index("clid")+5
                 clidend = line.index(" ",clidstart)
                 adminClid = line[clidstart:clidend]
+
             # request their cldbid (client database id)
             telnet.write(("clientgetdbidfromuid cluid=" + cluid + "\n").encode('ascii'))
 
