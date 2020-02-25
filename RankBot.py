@@ -63,7 +63,14 @@ def assignGroup(cldbid,telnet):
     try:
         user = users[cldbid]
     except KeyError:
-        command = "sendtextmessage targetmode=1 target=" + adminClid + " msg=User\s"+ cldbid +"\sisn't\sregistered!\n"
+
+        #if the admin is online send a text message if not then send an offline message
+        if adminClid:
+            command = "sendtextmessage targetmode=1 target=" + adminClid + " msg=User\s"+ cldbid +"\sisn't\sregistered!\n"
+            
+        else:
+            command = "messageadd cluid=" + adminUid + " subject=New\sUser message=User\s"+ cldbid +"\sisn't\sregistered!\n"
+
         telnet.write(command.encode('ascii'))
         return
 
@@ -177,6 +184,14 @@ while 1:
             
             # assign server group corresponding to league rank
             assignGroup(cldbid, telnet)
+        
+        # if admin leaves the server set adminclid to 0
+        if line.startswith("notifyclientleftview"):
+
+            clidstart = line.index("clid")+5
+            if (line[clidstart:] == adminClid):
+                adminClid = 0
+
 
     # sleep for half a second before each read
     time.sleep(0.5)
