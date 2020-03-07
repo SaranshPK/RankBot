@@ -34,9 +34,10 @@ servergroupsLAN = {
 with open("auth.json") as authfile:
     authVars = json.load(authfile)
     APIKey = authVars['APIKey']
-    password = authVars['password']
     host = authVars['host']
     port = authVars['port']
+    username = authVars['username']
+    password = authVars['password']
     adminUid = authVars['adminuid']
 
 # get summoner data from their name and region
@@ -127,7 +128,7 @@ def registerUser(message, invokeruid):
 
 # start of program connect the bot to the teamspeak server
 # and set up the bot to receive server and text updates
-with ts3.query.TS3ServerConnection("telnet://RankBot:" + password + "@" + host + ":" + port) as ts3conn:
+with ts3.query.TS3ServerConnection("telnet://" + username + ":" + password + "@" + host + ":" + port) as ts3conn:
     
     ts3conn.exec_("use", sid=4)
     ts3conn.exec_("servernotifyregister", event="server")
