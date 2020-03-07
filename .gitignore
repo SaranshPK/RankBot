@@ -1,4 +1,4 @@
-auth.txt
-userdata.txt
+auth.json
+userdata.json
 .vscode/
 convertApi.py

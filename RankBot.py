@@ -1,44 +1,43 @@
 import requests
 import json
-import telnetlib
-import time
 import io
+import ts3
 
 Regions = ["na1","la1","la2","euw1"]
-Port = "10011"
 adminClid = 0
 
 # server group id corresponding to each rank
 servergroupsNA = {
-    "IRON": 225,
-    "BRONZE": 159,
-    "SILVER": 160,
-    "GOLD": 161,
-    "PLATINUM": 162,
-    "DIAMOND": 163,
-    "MASTER": 226,
-    "GRANDMASTER": 227,
-    "CHALLENGER":228
+    'IRON': 225,
+    'BRONZE': 159,
+    'SILVER': 160,
+    'GOLD': 161,
+    'PLATINUM': 162,
+    'DIAMOND': 163,
+    'MASTER': 226,
+    'GRANDMASTER': 227,
+    'CHALLENGER':228
 }
 servergroupsLAN = {
-    "IRON": 230,
-    "BRONZE": 201,
-    "SILVER": 202,
-    "GOLD": 203,
-    "PLATINUM": 204,
-    "DIAMOND": 205,
-    "MASTER": 206,
-    "GRANDMASTER": 229,
-    "CHALLENGER":207
+    'IRON': 230,
+    'BRONZE': 201,
+    'SILVER': 202,
+    'GOLD': 203,
+    'PLATINUM': 204,
+    'DIAMOND': 205,
+    'MASTER': 206,
+    'GRANDMASTER': 229,
+    'CHALLENGER':207
 }
 
 # load authentication variables
-with open("auth.txt") as authfile:
+with open("auth.json") as authfile:
     authVars = json.load(authfile)
     APIKey = authVars['APIKey']
     password = authVars['password']
-    Host = authVars["host"]
-    adminUid = authVars["adminuid"]
+    host = authVars['host']
+    port = authVars['port']
+    adminUid = authVars['adminuid']
 
 # get summoner data from their name and region
 def requestSummonerData(region, summonerName):
@@ -53,25 +52,21 @@ def requestRankedData(region, ID):
     return response.json()
 
 # assign groups to a user identified by their cldbid (client database ID)
-def assignGroup(cldbid,telnet):
+def assignGroup(cldbid,ts3conn):
 
     # loads user json
-    with open('userdata.txt') as userfile:
+    with open('userdata.json') as userfile:
         users = json.load(userfile)
 
     # if the user doesnt exist prompts a message to register the user
     try:
         user = users[cldbid]
     except KeyError:
-
         #if the admin is online send a text message if not then send an offline message
         if adminClid:
-            command = "sendtextmessage targetmode=1 target=" + adminClid + " msg=User\s"+ cldbid +"\sisn't\sregistered!\n"
-            
+            ts3conn.exec_("sendtextmessage", targetmode=1, target=adminClid, msg="User "+ cldbid +" isn't registered!")
         else:
-            command = "messageadd cluid=" + adminUid + " subject=New\sUser message=User\s"+ cldbid +"\sisn't\sregistered!\n"
-
-        telnet.write(command.encode('ascii'))
+            ts3conn.exec_("messageadd", cluid=adminUid, subject="New User", message="User "+ cldbid +" isn't registered!")
         return
 
     # gets a user's ranked info and assigns them the correct rank
@@ -99,105 +94,115 @@ def assignGroup(cldbid,telnet):
             servergroup = str(servergroupsLAN[rank])
 
         # teamspeak query command to give a rank to a client
-        addgroupcommand = "servergroupaddclient sgid=" + servergroup + " cldbid=" + cldbid + "\n"
-        telnet.write(addgroupcommand.encode('ascii'))
+        try:
+            ts3conn.exec_("servergroupaddclient", sgid=servergroup, cldbid=cldbid)
+        except ts3.query.TS3QueryError:
+            pass
+
+
+#register a user to the database
+def registerUser(message, invokeruid):
+   
+    splitinfo = message.split(" ", 3)
+    cldbid = splitinfo[1]
+    region = splitinfo[2]
+    summonerName = splitinfo[3].replace(" ", "%20")
+
+    # request league id from name and region if they play league
+    if summonerName == "none":
+        ID = ""
+    else:
+        ID = requestSummonerData(Regions[int(region)], summonerName)['id']
+
+    # get user list
+    with open('userdata.json') as userfile:
+        users = json.load(userfile)
+    users[cldbid]={'summonerId': ID, 'region': region}
+
+    # add user to list
+    with open('userdata.json', 'w') as userfile:
+        json.dump(users, userfile, sort_keys=True, indent=2)
+    
+    return cldbid
 
 # start of program connect the bot to the teamspeak server
 # and set up the bot to receive server and text updates
-telnet = telnetlib.Telnet()
-telnet.open(Host, Port)
-telnet.write(("login serveradmin " + password + "\n").encode('ascii'))
-telnet.write("use 4\n".encode('ascii'))
-telnet.write("clientupdate client_nickname=RankBot\n".encode('ascii'))
-telnet.write("servernotifyregister event=server\n".encode('ascii'))
-telnet.write("servernotifyregister event=textprivate\n".encode('ascii'))
+with ts3.query.TS3ServerConnection("telnet://RankBot:" + password + "@" + host + ":" + port) as ts3conn:
+    
+    ts3conn.exec_("use", sid=4)
+    ts3conn.exec_("servernotifyregister", event="server")
+    ts3conn.exec_("servernotifyregister", event="textprivate")
+    
+    # always listening to the teamspeak notifcations
+    while True:
+        ts3conn.send_keepalive()
 
-# counter
-i = 0
+        try:
+            event = ts3conn.wait_for_event(timeout=200)
+        except ts3.query.TS3TimeoutError:
+            pass
+        else:
+            eventType = event.event
 
-# always listening to the teamspeak notifcations
-while 1:
+            #on user connection
+            if eventType == "notifycliententerview":
 
-    # read and filter server output
-    readData = telnet.read_very_eager()
-    readData = readData.decode("utf-8")
-    lines = readData.splitlines()
-    lines = filter(None,lines)
-    for line in lines:
+                eventData = event.parsed[0]
+                print(event.data)
+                cluid = eventData['client_unique_identifier']
 
-        # logs server messages
-        print(line)
+                if cluid == adminUid:
+                    adminClid = eventData['clid']
 
-        # on user connection
-        if line.startswith("notifycliententerview"):
+                # get users cldbid (client database id) from cluid
+                resp = ts3conn.exec_("clientgetdbidfromuid", cluid=cluid)
+                cldbid = resp[0]['cldbid']
+                assignGroup(cldbid, ts3conn)
 
-            # get their cluid (client unique id)
-            cluidstart = line.index("client_unique_identifier")+25
-            cluidend = line.index(" ",cluidstart)
-            cluid = line[cluidstart:cluidend]
+            if eventType == "notifytextmessage":
+                eventData = event.parsed[0]
+                print(event.data)
+                message = eventData['msg']
+                invokeruid = eventData['invokeruid']
+                invokerid = eventData['invokerid']
 
-            if cluid == adminUid:
-                
-                # get admin clid for text messages
-                clidstart = line.index("clid")+5
-                clidend = line.index(" ",clidstart)
-                adminClid = line[clidstart:clidend]
+                if message.startswith("!register"):
+                    if invokeruid == adminUid:
+                        cldbid = registerUser(message, invokeruid)
+                        assignGroup(cldbid, ts3conn)
 
-            # request their cldbid (client database id)
-            telnet.write(("clientgetdbidfromuid cluid=" + cluid + "\n").encode('ascii'))
-
-        # upon receiving a clients cldbid
-        if line.startswith("cluid"):
-            
-            cldbidstart = line.index("cldbid")+7
-            cldbid = line[cldbidstart:]
-
-            # assign server group corresponding to league rank
-            assignGroup(cldbid, telnet)
-
-        # upon receiving !register command
-        if line.startswith("notifytextmessage targetmode=1 msg=!register"):
-
-            # parse data from command
-            startindex = line.index("!register")+11
-            endindex = line.index(" ", startindex)
-            registerdata = line[startindex:endindex]
-            splitinfo = registerdata.split("\s", 2)
-            cldbid = splitinfo[0]
-            region = splitinfo[1]
-            summonerName = splitinfo[2].replace("\\s", "%20")
-
-            # request league id from name and region if they play league
-            if(summonerName == "none"):
-                ID = ""
-            else:
-                ID = requestSummonerData(Regions[int(region)], summonerName)['id']
-
-            # get user list
-            with open('userdata.txt') as userfile:
-                users = json.load(userfile)
-            users[cldbid]={"summonerId": ID, "region": region}
-
-            # add user to list
-            with open('userdata.txt', 'w') as userfile:
-                json.dump(users, userfile)
-            
-            # assign server group corresponding to league rank
-            assignGroup(cldbid, telnet)
+                if message.startswith("!rank"):
+                    resp = ts3conn.exec_("clientgetdbidfromuid", cluid=invokeruid)
+                    cldbid = resp[0]['cldbid']
+                    with open('userdata.json') as userfile:
+                        users = json.load(userfile)
+                        try:
+                            user = users[cldbid]
+                            summonerID = user['summonerId']
+                            if summonerID:
+                                region = Regions[int(user['region'])]
+                                rankeddata = requestRankedData(region, summonerID)
+                                rankeddata = reversed(rankeddata)
+                                for queue in rankeddata:
+                                    queueType = queue['queueType']
+                                    tier = queue['tier'].lower().capitalize()
+                                    rank = queue['rank']
+                                    lp = queue['leaguePoints']
+                                    if queueType == "RANKED_FLEX_SR":
+                                        queueType = "Flex Queue"
+                                    if  queueType == "RANKED_SOLO_5x5":
+                                        queueType = "Solo/Duo Queue"
+                                    ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg=queueType + ": " + tier + " " + rank + " " + str(lp) + " lp")
+                            else:
+                                ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="Apparently you dont play league. If this is false " + \
+                                                                                                                " message the owner  to get it fixed!")
+                        except KeyError:
+                            ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="You are not registered! Message the owner to register!")
         
-        # if admin leaves the server set adminclid to 0
-        if line.startswith("notifyclientleftview"):
-
-            clidstart = line.index("clid")+5
-            if (line[clidstart:] == adminClid):
-                adminClid = 0
-
-
-    # sleep for half a second before each read
-    time.sleep(0.5)
-
-    # send a useless command so teamspeak connection doesnt time out
-    if i == 300:
-        telnet.write("whoami\n".encode('ascii'))
-        i=0
-    i = i+1
+            # if admin leaves the server set adminclid to 0 so offline messages are sent
+            if eventType == "notifyclientleftview":
+                eventData = event.parsed[0]
+                print(event.data)
+                clid = eventData['clid']
+                if (clid == adminClid):
+                    adminClid = 0
