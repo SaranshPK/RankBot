@@ -2,9 +2,12 @@ import requests
 import json
 import io
 import ts3
+import time
 
 Regions = ["na1","la1","la2","euw1","kr"]
 adminClid = 0
+messageQueue = []
+timeOut = 1
 
 # server group id corresponding to each rank
 servergroupsNA = {
@@ -58,6 +61,7 @@ def requestSummonerData(region, summonerName):
     if response.status_code == 200:
         return response.json()
     else:
+        print("Summoner Name: {}, Region: {}, Status Code: {}".format(summonerName, region, response.status_code))
         return response.status_code
 
 # get a summoners ranked data based on their ID and region
@@ -67,6 +71,7 @@ def requestRankedData(region, ID):
     if response.status_code == 200:
         return response.json()
     else:
+        print("Summoner ID: {}, Region: {}, Status Code: {}".format(ID, region, response.status_code))
         return response.status_code
 
 def getUserRank(cldbid):
@@ -75,8 +80,8 @@ def getUserRank(cldbid):
         users = json.load(userfile)
     user = users[cldbid]
     summonerID = user['summonerId']
+    region = Regions[int(user['region'])]
     if summonerID:
-        region = Regions[int(user['region'])]
         rankedData = requestRankedData(region, summonerID)
         rankedData.sort(key=lambda k: k['queueType'], reverse=True)
     return region, rankedData
@@ -94,7 +99,8 @@ def assignGroup(cldbid,ts3conn):
         else:
             ts3conn.exec_("messageadd", cluid=adminUid, subject="New User", message="User "+ cldbid +" isn't registered!")
         return
-
+    except AttributeError:
+        return
     
     if rankedData:
 
@@ -115,11 +121,12 @@ def assignGroup(cldbid,ts3conn):
         # teamspeak query command to give a rank to a client
         try:
             ts3conn.exec_("servergroupaddclient", sgid=servergroup, cldbid=cldbid)
+            print("servergroup: " + rank)
         except ts3.query.TS3QueryError:
             pass
 
 #register a user to the database
-def registerUser(message, invokeruid):
+def registerUser(message):
    
     splitinfo = command, cldbid, region, summonerName = message.split(" ", 3)
 
@@ -139,6 +146,18 @@ def registerUser(message, invokeruid):
         json.dump(users, userfile, sort_keys=True, indent=2)
     
     return cldbid
+
+def delUser(message):
+
+    splitinfo = command, cldbid = message.split(" ")
+
+    with open('userdata.json') as userfile:
+        users = json.load(userfile)
+    del users[cldbid]
+
+    # add user to list
+    with open('userdata.json', 'w') as userfile:
+        json.dump(users, userfile, sort_keys=True, indent=2)
 
 def formatRankMessage(rankedData):
     message = ""
@@ -173,7 +192,14 @@ with ts3.query.TS3ServerConnection("telnet://" + username + ":" + password + "@"
     ts3conn.exec_("clientmove", clid=botClid, cid=235)
     ts3conn.exec_("servernotifyregister", event="server")
     ts3conn.exec_("servernotifyregister", event="textprivate")
-    
+
+    clients = ts3conn.query("clientlist").all()
+    cldbids = [client["client_database_id"] for client in clients if client["client_type"] != "1"]
+    for cldbid in cldbids:
+        assignGroup(cldbid, ts3conn)
+    del clients
+    del cldbids
+
     # always listening to the teamspeak notifcations
     while True:
         ts3conn.send_keepalive()
@@ -201,51 +227,90 @@ with ts3.query.TS3ServerConnection("telnet://" + username + ":" + password + "@"
                 assignGroup(cldbid, ts3conn)
 
             if eventType == "notifytextmessage":
+                
                 eventData = event.parsed[0]
                 print(event.data)
                 message = eventData['msg']
                 invokeruid = eventData['invokeruid']
                 invokerid = eventData['invokerid']
-
-                if message.startswith("!register"):
-                    if invokeruid == adminUid:
-                        cldbid = registerUser(message, invokeruid)
-                        assignGroup(cldbid, ts3conn)
-
-                if message.startswith("!rank"):
-                    if message == "!rank":
-                        resp = ts3conn.exec_("clientgetdbidfromuid", cluid=invokeruid)
-                        cldbid = resp[0]['cldbid']
+                if invokerid == botClid:
+                    continue
+                for messageInfo in messageQueue:
+                    timeSince = time.time() - messageInfo[1]
+                    if timeSince > messageInfo[2]:
+                        messageQueue.remove(messageInfo)
+                for messageInfo in messageQueue:
+                    if messageInfo[0] == invokerid:
                         try:
-                            region, rankedData = getUserRank(cldbid)
-                            if rankedData:
-                                reply = formatRankMessage(rankedData)
-                                ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg=reply)
-                            else:
-                                ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="Apparently you dont play league. If this is false, " + \
-                                                                                                                " message the owner  to get it fixed!")
-                        except KeyError:
-                            ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="You are not registered! Message the owner to register!")
-                    else:
-                        try:
-                            command, region, summonerName = message.split(" ", 2)
-                            ID = requestSummonerData(Regions[int(region)], summonerName)['id']
-                        except IndexError:
-                            ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="Region parameter has to be an valid integer that corresponds to a region.")
+                            ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="Timeout of " + str(round(messageInfo[2]-timeSince, 1)) \
+                                + " seconds! Please do not spam!")
+                        except ts3.query.TS3QueryError:
                             pass
-                        except ValueError:
-                            ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="Incorrect Format, Expected !rank <region> <summonerName>")
-                            pass
-                        except TypeError:
-                            ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="The summoner you have requested doesn't exist in this region.")
-                            pass
+                        if messageInfo[3]%5 == 0:
+                            messageInfo[2] = messageInfo[2] * 10
+                        if messageInfo[3] >= 15:
+                            if messageInfo[3] >= 30:
+                                try:
+                                    ts3conn.exec_("banclient", clid=invokerid, time=3600, banreason="Spam!")
+                                except ts3.query.TS3QueryError:
+                                    pass
+                            try:
+                                ts3conn.exec_("clientkick", clid=invokerid, reasonid=5, reasonmsg="Spam!")
+                            except ts3.query.TS3QueryError:
+                                pass
+                        messageInfo[3] += 1
+                        break
+                        
+                else:
+                    timeOfMessage = time.time()
+                    messageInfo = [invokerid, timeOfMessage, timeOut, 1]
+                    messageQueue.append(messageInfo)
 
-                        rankedData = requestRankedData(Regions[int(region)], ID)
-                        if rankedData:
-                                reply = formatRankMessage(rankedData)
-                                ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg=reply)
+                    if message.startswith("!register"):
+                        if invokeruid == adminUid:
+                            cldbid = registerUser(message)
+                            assignGroup(cldbid, ts3conn)
+                            ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="User has been registered!")
+
+                    if message.startswith("!deluser"):
+                        if invokeruid == adminUid:
+                            delUser(message)
+                            ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="User has been deleted!")
+
+                    if message.startswith("!rank"):
+                        if message == "!rank":
+                            resp = ts3conn.exec_("clientgetdbidfromuid", cluid=invokeruid)
+                            cldbid = resp[0]['cldbid']
+                            try:
+                                region, rankedData = getUserRank(cldbid)
+                                if rankedData:
+                                    reply = formatRankMessage(rankedData)
+                                    ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg=reply)
+                                else:
+                                    ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="Apparently you dont play league. If this is false, " + \
+                                                                                                                    " message the owner  to get it fixed!")
+                            except KeyError:
+                                ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="You are not registered! Message the owner to register!")
                         else:
-                            ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="This user is unranked.")
+                            try:
+                                command, region, summonerName = message.split(" ", 2)
+                                ID = requestSummonerData(Regions[int(region)], summonerName)['id']
+                            except IndexError:
+                                ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="Region parameter has to be an valid integer that corresponds to a region.")
+                                continue
+                            except ValueError:
+                                ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="Incorrect Format, Expected !rank <region> <summonerName>")
+                                continue
+                            except TypeError:
+                                ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="The summoner you have requested doesn't exist in this region.")
+                                continue
+
+                            rankedData = requestRankedData(Regions[int(region)], ID)
+                            if rankedData:
+                                    reply = formatRankMessage(rankedData)
+                                    ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg=reply)
+                            else:
+                                ts3conn.exec_("sendtextmessage", targetmode=1, target=invokerid, msg="This user is unranked.")
             # if admin leaves the server set adminclid to 0 so offline messages are sent
             if eventType == "notifyclientleftview":
                 eventData = event.parsed[0]
